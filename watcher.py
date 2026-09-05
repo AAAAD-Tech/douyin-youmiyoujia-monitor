@@ -355,7 +355,7 @@ def main_cron(cfg, test=False):
     state_file = cfg.get("state_file", "state.json")
     st = load_state(state_file)
     lo = float(cfg.get("min_interval_min", 5))
-    hi = float(cfg.get("max_interval_min", 8))
+    hi = float(cfg.get("max_interval_min", 15))
     max_jitter = int(cfg.get("max_jitter_sec", 120))
 
     if not test:
@@ -368,6 +368,11 @@ def main_cron(cfg, test=False):
             log.info("随机延迟 %d 秒后开始请求", jitter)
             time.sleep(jitter)
     check_once(cfg, test=test)
+    # 安排下次检查：现在 + 随机间隔（5~15 分钟），打破固定节奏规避抖音风控
+    if not test:
+        nxt = time.time() + random.uniform(lo, hi) * 60
+        save_state(state_file, load_state(state_file)["known_ids"], nxt)
+        log.info("已安排下次检查：%s", time.strftime("%H:%M:%S", time.localtime(nxt)))
 
 
 # ---------- 循环常驻（VPS / Render）模式 ----------
