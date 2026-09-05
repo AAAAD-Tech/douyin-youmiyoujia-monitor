@@ -411,6 +411,7 @@ def check_once(cfg, test=False, desktop=False, push_enabled=True):
     # 按时间正序播报
     new_posts.sort(key=lambda x: x["create_time"])
     lines, text_lines = [], []
+    detect_t = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())  # 本次检测时刻（北京时区本地时间）
     first_desc = (new_posts[0]["desc"] or "(无文案)")
     first_desc = first_desc.replace("\r", " ").replace("\n", " ").strip()[:20]
     title = "%s 发新作品：%s" % (name, first_desc)
@@ -418,12 +419,12 @@ def check_once(cfg, test=False, desktop=False, push_enabled=True):
         t = time.strftime("%Y-%m-%d %H:%M", time.localtime(p["create_time"]))
         desc = p["desc"] or "(无文案)"
         lines.append(
-            "<p>🎬 <b>%s</b><br>文案：%s<br>时间：%s<br>"
-            "点赞：%s 评论：%s<br><a href='%s'>点击查看作品</a></p><hr>"
-            % (name, desc, t, p["digg"], p["comment"], p["url"])
+            "<p>🎬 <b>%s</b><br>文案：%s<br>发布：%s<br>"
+            "检测：%s<br>点赞：%s 评论：%s<br><a href='%s'>点击查看作品</a></p><hr>"
+            % (name, desc, t, detect_t, p["digg"], p["comment"], p["url"])
         )
-        text_lines.append("文案：%s\n时间：%s\n点赞：%s 评论：%s\n链接：%s"
-                          % (desc, t, p["digg"], p["comment"], p["url"]))
+        text_lines.append("文案：%s\n发布：%s\n检测：%s\n点赞：%s 评论：%s\n链接：%s"
+                          % (desc, t, detect_t, p["digg"], p["comment"], p["url"]))
     html = "<h3>%s 发了 %d 条新作品！</h3>" % (name, len(new_posts)) + "".join(lines)
     text = title + "\n\n" + "\n\n".join(text_lines)
 
