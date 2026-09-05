@@ -2,7 +2,7 @@ name: douyin-monitor
 
 on:
   schedule:
-    # 每 5 分钟触发一次；实际请求间隔由脚本随机化为 5~15 分钟，打破固定节奏规避抖音风控
+    # 每 5 分钟触发一次；实际请求间隔由脚本随机化为 5~8 分钟，打破固定节奏规避抖音风控
     - cron: '*/5 * * * *'
   workflow_dispatch: {}   # 允许在 Actions 页面手动触发测试
 
@@ -32,11 +32,11 @@ jobs:
           BARK_KEY:           ${{ secrets.BARK_KEY }}
           CREATOR_NAME:       ${{ secrets.CREATOR_NAME }}
           MIN_INTERVAL_MIN:   '5'
-          MAX_INTERVAL_MIN:   '15'
+          MAX_INTERVAL_MIN:   '8'
 
       - name: 保存状态（持久化已推送记录，避免重复提醒）
         run: |
           git config user.name "douyin-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add state.json
+          git add state.json shop_state.json
           git diff --cached --quiet || (git commit -m "chore: update state" && git push)
