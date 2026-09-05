@@ -173,6 +173,105 @@ def fetch_latest_posts(sec_user_id, cookie, count=20):
     return posts
 
 
+# ---------- 抓取店铺商品数（监控上新） ----------
+def fetch_shop_count(sec_user_id, cookie):
+    """从博主主页的店铺卡片取当前商品数（用于监控店铺上新）。"""
+    params = {
+        "device_platform": "webapp", "aid": "6383", "channel": "channel_pc_web",
+        "pc_client_type": "1", "version_code": "190500", "version_name": "19.5.0",
+        "cookie_enabled": "true", "browser_language": "zh-CN", "browser_platform": "Win32",
+        "browser_name": "Firefox", "browser_online": "true", "engine_name": "Gecko",
+        "os_name": "Windows", "os_version": "10", "platform": "PC",
+        "screen_width": "1920", "screen_height": "1080", "browser_version": "124.0",
+        "engine_version": "122.0.0.0", "cpu_core_num": "12", "device_memory": "8",
+        "sec_user_id": sec_user_id,
+    }
+    a_bogus = ABogus().get_value(params)
+    a_bogus = quote(a_bogus, safe="")
+    url = "https://www.douyin.com/aweme/v1/web/user/profile/other/?" + urlencode(params) + "&a_bogus=" + a_bogus
+    headers = {"User-Agent": UA, "Referer": "https://www.douyin.com/", "Cookie": cookie}
+    resp = requests.get(url, headers=headers, timeout=15)
+    if not resp.text.strip():
+        raise RuntimeError("抖音返回空响应（Cookie 可能失效）")
+    d = resp.json()
+    if d.get("status_code", 0) != 0:
+        raise RuntimeError("抖音返回错误 status_code=%s" % d.get("status_code"))
+    u = d.get("user", {}) or {}
+    for card in (u.get("card_entries") or []):
+        if isinstance(card, str):
+            try:
+                card = json.loads(card)
+            except Exception:
+                continue
+        if not isinstance(card, dict):
+            continue
+        cd = card.get("card_data") or {}
+        if isinstance(cd, str):
+            try:
+                cd = json.loads(cd)
+            except Exception:
+                cd = {}
+        if not isinstance(cd, dict):
+            continue
+        if cd.get("is_store") or cd.get("store_type") == "shop":
+            try:
+                return int(cd.get("product_count", 0))
+            except Exception:
+                return 0
+    return 0
+
+
+def check_shop(cfg, test=False, push_enabled=True):
+    """监控博主店铺商品数变化（上新提醒）。完整商品名需店铺主私有接口，这里用商品数变化做可靠近似。"""
+    sec_user_id = cfg["sec_user_id"]
+    cookie = cfg["cookie"]
+    name = cfg.get("creator_name", "该博主")
+    shop_file = os.path.join(SCRIPT_DIR, "shop_state.json")
+    try:
+        sd = json.load(open(shop_file, encoding="utf-8"))
+    except Exception:
+        sd = {}
+    known = int(sd.get("known_shop_count", 0) or 0)
+
+    cnt = None
+    last_err = None
+    for attempt in range(3):
+        try:
+            cnt = fetch_shop_count(sec_user_id, cookie)
+            if cnt:
+                break
+        except Exception as e:
+            last_err = e
+            log.warning("店铺计数抓取失败(第%d次)，3秒后重试: %s", attempt + 1, e)
+            time.sleep(3)
+    if not cnt:
+        log.info("店铺计数获取失败，跳过本次店铺检查: %s", last_err)
+        return
+
+    if test:
+        log.info("[TEST] 店铺当前商品数: %d", cnt)
+        return
+
+    if known == 0:
+        with open(shop_file, "w", encoding="utf-8") as f:
+            json.dump({"known_shop_count": cnt}, f, ensure_ascii=False, indent=2)
+        log.info("店铺监控已播种，当前商品数 %d", cnt)
+        return
+
+    if cnt > known:
+        title = "%s 的店铺上新了！" % name
+        content = "【%s生态农业】抖音小店商品数 %d → %d，可能有新品上架。\n店铺：https://haohuo.jinritemai.com/views/shop/index?id=shccpkS" % (name, known, cnt)
+        log.info("发现店铺上新：商品数 %d → %d", known, cnt)
+        if push_enabled:
+            push_serverchan(cfg.get("serverchan_key"), title, content)
+            push_pushplus(cfg.get("pushplus_token"), title, title + "\n" + content)
+            push_bark(cfg.get("bark_key"), title, content)
+    else:
+        log.info("店铺商品数无变化（%d）", cnt)
+    with open(shop_file, "w", encoding="utf-8") as f:
+        json.dump({"known_shop_count": cnt}, f, ensure_ascii=False, indent=2)
+
+
 # ---------- 状态存储 ----------
 def load_state(state_file):
     path = os.path.join(SCRIPT_DIR, state_file)
@@ -355,7 +454,7 @@ def main_cron(cfg, test=False):
     state_file = cfg.get("state_file", "state.json")
     st = load_state(state_file)
     lo = float(cfg.get("min_interval_min", 5))
-    hi = float(cfg.get("max_interval_min", 15))
+    hi = float(cfg.get("max_interval_min", 8))
     max_jitter = int(cfg.get("max_jitter_sec", 120))
 
     if not test:
@@ -368,7 +467,8 @@ def main_cron(cfg, test=False):
             log.info("随机延迟 %d 秒后开始请求", jitter)
             time.sleep(jitter)
     check_once(cfg, test=test)
-    # 安排下次检查：现在 + 随机间隔（5~15 分钟），打破固定节奏规避抖音风控
+    check_shop(cfg, test=test, push_enabled=not test)
+    # 安排下次检查：现在 + 随机间隔（5~8 分钟，越短越好且规避抖音风控）
     if not test:
         nxt = time.time() + random.uniform(lo, hi) * 60
         save_state(state_file, load_state(state_file)["known_ids"], nxt)
