@@ -222,7 +222,8 @@ def fetch_shop_count(sec_user_id, cookie):
 
 
 def check_shop(cfg, test=False, push_enabled=True):
-    """监控博主店铺商品数变化（上新提醒）。完整商品名需店铺主私有接口，这里用商品数变化做可靠近似。"""
+    """监控博主店铺商品数变化（上新提醒）。完整商品名需店铺主私有接口，这里用商品数变化做可靠近似。
+    注意：抖音该商品数接口会轻微波动（如 38<->39），故采用滞后确认——连续 2 次读到变多才推送，避免误报。"""
     sec_user_id = cfg["sec_user_id"]
     cookie = cfg["cookie"]
     name = cfg.get("creator_name", "该博主")
@@ -232,6 +233,7 @@ def check_shop(cfg, test=False, push_enabled=True):
     except Exception:
         sd = {}
     known = int(sd.get("known_shop_count", 0) or 0)
+    streak = int(sd.get("high_streak", 0) or 0)
 
     cnt = None
     last_err = None
@@ -249,27 +251,38 @@ def check_shop(cfg, test=False, push_enabled=True):
         return
 
     if test:
-        log.info("[TEST] 店铺当前商品数: %d", cnt)
+        log.info("[TEST] 店铺当前商品数: %d (基线 %d, 连高 %d)", cnt, known, streak)
         return
 
     if known == 0:
         with open(shop_file, "w", encoding="utf-8") as f:
-            json.dump({"known_shop_count": cnt}, f, ensure_ascii=False, indent=2)
+            json.dump({"known_shop_count": cnt, "high_streak": 0}, f, ensure_ascii=False, indent=2)
         log.info("店铺监控已播种，当前商品数 %d", cnt)
         return
 
     if cnt > known:
-        title = "%s 的店铺上新了！" % name
-        content = "【%s生态农业】抖音小店商品数 %d → %d，可能有新品上架。\n店铺：https://haohuo.jinritemai.com/views/shop/index?id=shccpkS" % (name, known, cnt)
-        log.info("发现店铺上新：商品数 %d → %d", known, cnt)
-        if push_enabled:
-            push_serverchan(cfg.get("serverchan_key"), title, content)
-            push_pushplus(cfg.get("pushplus_token"), title, title + "\n" + content)
-            push_bark(cfg.get("bark_key"), title, content)
+        streak += 1
+        if streak >= 2:
+            title = "%s 的店铺上新了！" % name
+            content = "【%s生态农业】抖音小店商品数 %d → %d，可能有新品上架。\n店铺：https://haohuo.jinritemai.com/views/shop/index?id=shccpkS" % (name, known, cnt)
+            log.info("发现店铺上新（连续2次确认）：商品数 %d → %d", known, cnt)
+            if push_enabled:
+                push_serverchan(cfg.get("serverchan_key"), title, content)
+                push_pushplus(cfg.get("pushplus_token"), title, title + "\n" + content)
+                push_bark(cfg.get("bark_key"), title, content)
+            known = cnt
+            streak = 0
+        else:
+            log.info("店铺商品数升至 %d（待第2次确认，基线 %d）", cnt, known)
     else:
-        log.info("店铺商品数无变化（%d）", cnt)
+        streak = 0
+        if cnt < known:
+            log.info("店铺商品数回落至 %d（更新基线，不告警）", cnt)
+        else:
+            log.info("店铺商品数无变化（%d）", cnt)
+        known = cnt
     with open(shop_file, "w", encoding="utf-8") as f:
-        json.dump({"known_shop_count": cnt}, f, ensure_ascii=False, indent=2)
+        json.dump({"known_shop_count": known, "high_streak": streak}, f, ensure_ascii=False, indent=2)
 
 
 # ---------- 状态存储 ----------
