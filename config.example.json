@@ -1,0 +1,15 @@
+{
+  "sec_user_id": "在此填写由米由家的sec_user_id（主页链接 user/ 后面那串）",
+  "cookie": "在此填写浏览器复制的抖音登录Cookie（会过期，需定期更新）",
+  "creator_name": "由米由家",
+  "serverchan_key": "在此填写Server酱的SCT Key（推微信，主通道）",
+  "pushplus_token": "",
+  "bark_key": "",
+  "enable_desktop_toast": false,
+  "count": 20,
+  "state_file": "state.json",
+  "log_file": "watcher.log",
+  "min_interval_min": 5,
+  "max_interval_min": 8,
+  "max_jitter_sec": 120
+}
