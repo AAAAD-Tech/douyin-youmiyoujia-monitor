@@ -36,6 +36,7 @@ import random
 import logging
 import subprocess
 import base64
+import re
 from urllib.parse import urlencode, quote
 
 # ---------- 把本地依赖目录加入搜索路径 ----------
@@ -286,6 +287,15 @@ def check_shop(cfg, test=False, push_enabled=True):
 
 
 # ---------- 状态存储 ----------
+def normalize_desc(desc):
+    """归一化文案用于"同内容重发"去重：去掉空白与标点后小写。太短（<3字）返回空，不参与去重。"""
+    if not desc:
+        return ""
+    s = re.sub(r"\s+", "", desc)
+    s = re.sub(r"[^\w\u4e00-\u9fff]", "", s).lower()
+    return s if len(s) >= 3 else ""
+
+
 def load_state(state_file):
     path = os.path.join(SCRIPT_DIR, state_file)
     data = {}
@@ -298,15 +308,19 @@ def load_state(state_file):
     return {
         "known_ids": set(data.get("known_ids", [])),
         "next_check_ts": float(data.get("next_check_ts", 0) or 0),
+        "seen_descs": set(data.get("seen_descs", []) or []),
     }
 
 
-def save_state(state_file, known_ids, next_check_ts):
+def save_state(state_file, known_ids, next_check_ts, seen_descs=None):
     path = os.path.join(SCRIPT_DIR, state_file)
+    if seen_descs is None:
+        seen_descs = set()
     with open(path, "w", encoding="utf-8") as f:
         json.dump({
             "known_ids": list(known_ids)[-300:],
             "next_check_ts": next_check_ts,
+            "seen_descs": list(seen_descs)[-60:],
         }, f, ensure_ascii=False, indent=2)
 
 
@@ -398,14 +412,28 @@ def check_once(cfg, test=False, desktop=False, push_enabled=True):
 
     if not known:
         # 首次运行：仅播种，不提醒
-        save_state(state_file, set(p["aweme_id"] for p in posts), time.time())
+        save_state(state_file, set(p["aweme_id"] for p in posts), time.time(),
+                   set(normalize_desc(p["desc"]) for p in posts if normalize_desc(p["desc"])))
         log.info("首次运行，已记录 %d 条现有作品，开始监控", len(posts))
         return
 
     new_posts = [p for p in posts if p["aweme_id"] not in known]
+    # 内容级去重：博主删除后重发会得到新 aweme_id，仅按 ID 会重复推送；
+    # 用归一化文案兜底，新视频文案与近期已推送过的某条一致则视为重发、跳过推送。
+    seen_descs = set(st.get("seen_descs", []))
+    if new_posts:
+        kept = []
+        for p in new_posts:
+            sig = normalize_desc(p["desc"])
+            if sig and sig in seen_descs:
+                log.info("内容去重：疑似同视频重发（文案一致），跳过推送：%s", p["desc"][:30])
+                continue
+            kept.append(p)
+        new_posts = kept
     if not new_posts:
         log.info("无新作品（现有 %d 条均已记录）", len(posts))
-        save_state(state_file, known | set(p["aweme_id"] for p in posts), time.time())
+        save_state(state_file, known | set(p["aweme_id"] for p in posts), time.time(),
+                   seen_descs | set(normalize_desc(p["desc"]) for p in posts if normalize_desc(p["desc"])))
         return
 
     # 按时间正序播报
@@ -436,7 +464,9 @@ def check_once(cfg, test=False, desktop=False, push_enabled=True):
     if desktop:
         show_desktop_toast(title, (new_posts[0]["desc"] or "(无文案)")[:80])
 
-    save_state(state_file, known | set(p["aweme_id"] for p in posts), time.time())
+    pushed_sigs = set(normalize_desc(p["desc"]) for p in new_posts if normalize_desc(p["desc"]))
+    save_state(state_file, known | set(p["aweme_id"] for p in posts), time.time(),
+               seen_descs | pushed_sigs | set(normalize_desc(p["desc"]) for p in posts if normalize_desc(p["desc"])))
 
 
 def show_desktop_toast(title, message):
@@ -485,7 +515,8 @@ def main_cron(cfg, test=False):
     # 安排下次检查：现在 + 随机间隔（5~8 分钟，越短越好且规避抖音风控）
     if not test:
         nxt = time.time() + random.uniform(lo, hi) * 60
-        save_state(state_file, load_state(state_file)["known_ids"], nxt)
+        st2 = load_state(state_file)
+        save_state(state_file, st2["known_ids"], nxt, st2.get("seen_descs", set()))
         log.info("已安排下次检查：%s", time.strftime("%H:%M:%S", time.localtime(nxt)))
 
 
