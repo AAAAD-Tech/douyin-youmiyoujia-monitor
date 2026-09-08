@@ -38,6 +38,8 @@ jobs:
         run: |
           git config user.name "douyin-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add state.json 2>/dev/null || true
+          # 先拉取远端最新提交再提交，避免高频运行时状态被非快进拒绝而丢失（导致重复检测）
+          git pull --rebase --autostash origin main || echo "pull skipped (try push anyway)"
+          git add state.json
           [ -f shop_state.json ] && git add shop_state.json
           git diff --cached --quiet || (git commit -m "chore: update state" && git push)
